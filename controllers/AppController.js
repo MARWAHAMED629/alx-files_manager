@@ -1,4 +1,4 @@
-const redisClient = require('../utils/redis');
+import redisClient from '../utils/redis';
 const dbClient = require('../utils/db');
 
 class AppController {
