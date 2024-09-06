@@ -1,57 +1,60 @@
-import { ObjectID } from 'mongodb';
-import redisClient from './redis';
+/* eslint-disable import/no-named-as-default */
+/* eslint-disable no-unused-vars */
+import sha1 from 'sha1';
+import { Request } from 'express';
+import mongoDBCore from 'mongodb/lib/core';
 import dbClient from './db';
+import redisClient from './redis';
 
-// retrieves authentication token from headers
-async function getAuthToken(request) {
-  const token = request.headers['X-token'];
-  return `auth_${token}`;
-}
+/**
+ * Fetches the user from the Authorization header in the given request object.
+ * @param {Request} req The Express request object.
+ * @returns {Promise<{_id: ObjectId, email: string, password: string}>}
+ */
+export const getUserFromAuthorization = async (req) => {
+  const authorization = req.headers.authorization || null;
 
-// finds a user ID based on token passed to headers
-async function findUserIdByToken(request) {
-  const key = await getAuthToken(request);
-  const userId = await redisClient.get(key);
-  return userId || null;
-}
-
-// finds a user from db based on ID
-async function findUserById(userId) {
-  const userExistsArray = await dbClient.users.find(`ObjectId("${userId}")`).toArray();
-  return userExistsArray[0] || null;
-}
-
-async function getUserById(request) {
-//   const key = getAuthToken(request);
-  const userId = findUserIdByToken(request);
-  if (userId) {
-    const users = dbClient.db.collection('users');
-    const objectId = new ObjectID(userId);
-    const user = await users.findOne({ _id: objectId });
-    if (!user) {
-      return null;
-    }
-    return user;
+  if (!authorization) {
+    return null;
   }
-  return null;
-}
+  const authorizationParts = authorization.split(' ');
 
-async function getUser(request) {
-  const token = request.header('X-Token');
-  const key = `auth_${token}`;
-  const userId = await redisClient.get(key);
-  if (userId) {
-    const users = dbClient.db.collection('users');
-    const idObject = new ObjectID(userId);
-    const user = await users.findOne({ _id: idObject });
-    if (!user) {
-      return null;
-    }
-    return user;
+  if (authorizationParts.length !== 2 || authorizationParts[0] !== 'Basic') {
+    return null;
   }
-  return null;
-}
+  const token = Buffer.from(authorizationParts[1], 'base64').toString();
+  const sepPos = token.indexOf(':');
+  const email = token.substring(0, sepPos);
+  const password = token.substring(sepPos + 1);
+  const user = await (await dbClient.usersCollection()).findOne({ email });
 
-export {
-  findUserIdByToken, findUserById, getUserById, getUser,
+  if (!user || sha1(password) !== user.password) {
+    return null;
+  }
+  return user;
+};
+
+/**
+ * Fetches the user from the X-Token header in the given request object.
+ * @param {Request} req The Express request object.
+ * @returns {Promise<{_id: ObjectId, email: string, password: string}>}
+ */
+export const getUserFromXToken = async (req) => {
+  const token = req.headers['x-token'];
+
+  if (!token) {
+    return null;
+  }
+  const userId = await redisClient.get(`auth_${token}`);
+  if (!userId) {
+    return null;
+  }
+  const user = await (await dbClient.usersCollection())
+    .findOne({ _id: new mongoDBCore.BSON.ObjectId(userId) });
+  return user || null;
+};
+
+export default {
+  getUserFromAuthorization: async (req) => getUserFromAuthorization(req),
+  getUserFromXToken: async (req) => getUserFromXToken(req),
 };
